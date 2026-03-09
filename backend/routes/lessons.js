@@ -59,6 +59,86 @@ router.get("/:id", async (req, res) => {
 });
 
 /**
+ * GET /api/lessons/:id/progress
+ * Return saved progress for this lesson so the user can resume (step, time, video position, answers).
+ */
+router.get("/:id/progress", async (req, res) => {
+  try {
+    const decoded = await verifyIdToken(req);
+    const uid = decoded?.uid;
+    if (!uid) return res.status(401).json({ error: "Unauthorized" });
+
+    const db = getDb();
+    if (!db) return res.status(503).json({ error: "Database not configured" });
+
+    const lessonId = req.params.id;
+    const historyRef = db.collection("users").doc(uid).collection("lessonHistory").doc(lessonId);
+    const doc = await historyRef.get();
+    if (!doc.exists) return res.json({ progress: null });
+
+    const d = doc.data();
+    if (d.passed) return res.json({ progress: null, completed: true, score: d.score });
+
+    const progress = {
+      currentStep: typeof d.currentStep === "number" ? d.currentStep : 0,
+      totalTimeSpent: typeof d.totalTimeSpent === "number" ? d.totalTimeSpent : 0,
+      videoProgressSeconds: typeof d.videoProgressSeconds === "number" ? d.videoProgressSeconds : 0,
+      answers: Array.isArray(d.answers) ? d.answers : [],
+      descriptionRead: !!d.descriptionRead,
+      videoWatched: !!d.videoWatched,
+    };
+    return res.json({ progress, completed: false });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * POST /api/lessons/:id/progress
+ * Save progress: description read (30%), video watched (50%), current step, total time, video position, answers.
+ */
+router.post("/:id/progress", async (req, res) => {
+  try {
+    const decoded = await verifyIdToken(req);
+    const uid = decoded?.uid;
+    if (!uid) return res.status(401).json({ error: "Unauthorized" });
+
+    const db = getDb();
+    if (!db) return res.status(503).json({ error: "Database not configured" });
+
+    const lessonId = req.params.id;
+    const { descriptionRead, videoWatched, currentStep, totalTimeSpent, videoProgressSeconds, answers } = req.body || {};
+
+    const historyRef = db.collection("users").doc(uid).collection("lessonHistory").doc(lessonId);
+    const existing = (await historyRef.get()).data() || {};
+
+    const updates = {
+      updatedAt: new Date().toISOString(),
+      ...(descriptionRead === true && { descriptionRead: true }),
+      ...(videoWatched === true && { videoWatched: true }),
+      ...(typeof currentStep === "number" && currentStep >= 0 && { currentStep }),
+      ...(typeof totalTimeSpent === "number" && totalTimeSpent >= 0 && { totalTimeSpent }),
+      ...(typeof videoProgressSeconds === "number" && videoProgressSeconds >= 0 && { videoProgressSeconds }),
+      ...(Array.isArray(answers) && { answers }),
+    };
+
+    await historyRef.set(updates, { merge: true });
+    const merged = { ...existing, ...updates };
+
+    const progressPercent = merged.passed ? 100 : merged.videoWatched ? 50 : merged.descriptionRead ? 30 : 0;
+    return res.json({
+      ok: true,
+      progressPercent,
+      descriptionRead: !!merged.descriptionRead,
+      videoWatched: !!merged.videoWatched,
+      passed: !!merged.passed,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
  * POST /api/lessons/:id/submit
  * Enhanced lesson submission with detailed analytics
  */
@@ -91,6 +171,8 @@ router.post("/:id/submit", async (req, res) => {
         timeSpent: timeSpent || 0,
         completedAt: new Date().toISOString(),
         attempts: (await historyRef.get()).data()?.attempts + 1 || 1,
+        descriptionRead: true,
+        videoWatched: true,
       }, { merge: true });
       await updateUserProgress(uid, req.params.id, scoring);
       return res.json({ score: 100, passed: true, ...scoring });
@@ -127,6 +209,8 @@ router.post("/:id/submit", async (req, res) => {
       deviceInfo,
       completedAt: new Date().toISOString(),
       attempts: (await historyRef.get()).data()?.attempts + 1 || 1,
+      descriptionRead: true,
+      videoWatched: true,
       learningMetrics: {
         engagementScore: calculateEngagementScore(results, timeSpent),
         masteryLevel: calculateMasteryLevel(results, lessonData),
@@ -436,19 +520,20 @@ async function updateUserProgress(uid, lessonId, scoring) {
     completedLessons: 0,
     totalLessons: 0,
     averageScore: 0,
-    streakDays: 0
+    currentStreak: 0
   };
 
+  const currentStreak = typeof currentProgress.currentStreak === "number" ? currentProgress.currentStreak : 0;
   const updatedProgress = {
-    completedLessons: scoring.passed ? currentProgress.completedLessons + 1 : currentProgress.completedLessons,
-    totalLessons: currentProgress.totalLessons + 1,
+    completedLessons: scoring.passed ? (currentProgress.completedLessons || 0) + 1 : (currentProgress.completedLessons || 0),
+    totalLessons: (currentProgress.totalLessons || 0) + 1,
     averageScore: Math.round(
-      (currentProgress.averageScore * currentProgress.totalLessons + scoring.score) /
-      (currentProgress.totalLessons + 1)
+      ((currentProgress.averageScore || 0) * (currentProgress.totalLessons || 0) + scoring.score) /
+      ((currentProgress.totalLessons || 0) + 1)
     ),
     lastCompletedAt: now,
     lastActivityAt: now,
-    currentStreak: scoring.passed ? currentProgress.currentStreak + 1 : 0
+    currentStreak: scoring.passed ? currentStreak + 1 : 0
   };
 
   await progressRef.set(updatedProgress, { merge: true });

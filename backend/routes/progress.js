@@ -45,30 +45,48 @@ router.get("/", async (req, res) => {
 
     let lessonHistory = [];
     if (db && uid) {
-      // Calculate real completed lessons from lesson history (lessons.js writes to users/uid/lessonHistory)
+      // Primary: lesson history from users/uid/lessonHistory (written by POST /api/lessons/:id/submit)
       const lessonHistorySnap = await db.collection("users").doc(uid).collection("lessonHistory").get();
       lessonHistory = lessonHistorySnap.docs.map(doc => ({ lessonId: doc.id, ...doc.data() }));
+
+      // Fallback: if empty, also read from progress/uid/history (written by POST /api/progress/submit) so UI matches either path
+      if (lessonHistory.length === 0) {
+        const legacyHistorySnap = await db.collection("progress").doc(uid).collection("history").get();
+        lessonHistory = legacyHistorySnap.docs.map(doc => {
+          const d = doc.data();
+          return { lessonId: doc.id, score: d.score, passed: d.passed, attempts: d.attempts, updatedAt: d.updatedAt, completedAt: d.updatedAt };
+        });
+      }
+
       completedLessons = lessonHistory.filter(h => h.passed === true).length;
 
-      // Calculate average score from completed lessons
+      // Average score from completed lessons
       const scores = lessonHistory
         .map(h => h.score)
         .filter(score => typeof score === 'number');
-      
       if (scores.length > 0) {
         averageScore = Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length);
       }
 
-      // Get streak from overall progress
-      const progressDoc = await db.collection("users").doc(uid).collection("progress").doc("overall").get();
-      if (progressDoc.exists) {
-        const progressData = progressDoc.data();
-        streakDays = progressData.currentStreak || 0;
+      // Streak: primary from users/uid/progress/overall (written by lessons.js updateUserProgress)
+      const userProgressRef = db.collection("users").doc(uid).collection("progress").doc("overall");
+      const userProgressDoc = await userProgressRef.get();
+      if (userProgressDoc.exists) {
+        const progressData = userProgressDoc.data();
+        streakDays = progressData.currentStreak ?? progressData.streakDays ?? 0;
+      }
+      // Fallback: legacy progress/uid doc (written by POST /api/progress or /api/progress/submit)
+      if (streakDays === 0) {
+        const legacyProgressDoc = await db.collection("progress").doc(uid).get();
+        if (legacyProgressDoc.exists) {
+          const legacyData = legacyProgressDoc.data();
+          streakDays = legacyData.streakDays ?? legacyData.currentStreak ?? 0;
+        }
       }
     }
 
     const remainingLessons = totalLessons - completedLessons;
-    
+
     res.json({
       completedLessons,
       totalLessons,
@@ -84,7 +102,7 @@ router.get("/", async (req, res) => {
   }
 });
 
-/** GET /api/progress/history – per-lesson history (same source as GET /: users/uid/lessonHistory) */
+/** GET /api/progress/history – per-lesson history (same source as GET /: users/uid/lessonHistory, with legacy fallback) */
 router.get("/history", async (req, res) => {
   try {
     const decoded = await verifyIdToken(req);
@@ -93,7 +111,7 @@ router.get("/history", async (req, res) => {
     if (!db || !uid) return res.json({ history: [] });
 
     const snap = await db.collection("users").doc(uid).collection("lessonHistory").get();
-    const history = snap.docs.map(doc => {
+    let history = snap.docs.map(doc => {
       const d = doc.data();
       return {
         lessonId: doc.id,
@@ -103,6 +121,19 @@ router.get("/history", async (req, res) => {
         updatedAt: d.completedAt ?? d.updatedAt ?? new Date().toISOString(),
       };
     });
+    if (history.length === 0) {
+      const legacySnap = await db.collection("progress").doc(uid).collection("history").get();
+      history = legacySnap.docs.map(doc => {
+        const d = doc.data();
+        return {
+          lessonId: doc.id,
+          score: d.score ?? 0,
+          passed: d.passed ?? false,
+          attempts: d.attempts ?? 1,
+          updatedAt: d.updatedAt ?? new Date().toISOString(),
+        };
+      });
+    }
     res.json({ history });
   } catch (e) {
     res.status(500).json({ error: e.message });
