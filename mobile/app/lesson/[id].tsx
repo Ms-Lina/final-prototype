@@ -37,9 +37,7 @@ export default function ActiveLessonScreen() {
   const playerRef = useRef<any>(null);
   const videoStartSecondsRef = useRef(0);
 
-  const MIN_VIDEO_SECONDS = 30;
   const [videoWatchedSeconds, setVideoWatchedSeconds] = useState(0);
-  const videoWatchedEnough = !lesson?.videoUrl || videoWatchedSeconds >= MIN_VIDEO_SECONDS;
 
   // Audio recording state
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
@@ -614,15 +612,10 @@ export default function ActiveLessonScreen() {
       </ScrollView>
 
       <View style={{ padding: spacing.md, borderTopWidth: 1, borderTopColor: colors.border }}>
-        {isVideoStep && lesson?.videoUrl && !videoWatchedEnough && (
-          <Text style={{ fontSize: fontSize.xs, color: colors.mutedForeground, marginBottom: spacing.sm, textAlign: "center" }}>
-            Reba videwo nkadogo ({MIN_VIDEO_SECONDS}s) kugira utangire ibibazo. ({videoWatchedSeconds}s / {MIN_VIDEO_SECONDS}s)
-          </Text>
-        )}
         <Button
           title={isVideoStep ? copy.lessons.startExercises : (currentStep === activities.length ? copy.lessons.submit : copy.lessons.next)}
           onPress={handleNext}
-          disabled={(isVideoStep && !videoWatchedEnough) || (!isVideoStep && !answers[currentStep - 1] && !selectedAnswer && currentActivity?.type !== "audio")}
+          disabled={!isVideoStep && !answers[currentStep - 1] && !selectedAnswer && currentActivity?.type !== "audio"}
           loading={isSubmitting}
         />
       </View>
