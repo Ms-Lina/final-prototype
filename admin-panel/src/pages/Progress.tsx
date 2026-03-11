@@ -1,21 +1,15 @@
-import { useEffect, useState } from "react";
-import { api, type Progress as ProgressType } from "../lib/api";
+import { useAdminData } from "../hooks/useAdminData";
+import { fetchProgress } from "../lib/admin-api";
 
 export default function Progress() {
-  const [progress, setProgress] = useState<ProgressType[]>([]);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
-
-  const load = () => {
-    setLoading(true);
-    setError("");
-    api<{ progress: ProgressType[] }>("/api/admin/progress")
-      .then((r) => setProgress(r.progress))
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(() => load(), []);
+  const { data: progressList, loading, error, reload: load } = useAdminData(
+    async () => {
+      const r = await fetchProgress();
+      return r.progress;
+    },
+    []
+  );
+  const progress = progressList ?? [];
 
   if (loading && progress.length === 0) {
     return (

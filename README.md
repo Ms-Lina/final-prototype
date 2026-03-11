@@ -149,15 +149,27 @@ Project is in **.firebaserc** (default **menyai-27cfc**). Switch: `firebase use 
 
 ## Deploy backend
 
+**Live backend (Render):** `https://menyai-nslw.onrender.com` — use this as **EXPO_PUBLIC_API_URL** (mobile) and **VITE_API_URL** or Backend URL (admin panel).
+
 **Order:** Push code → Deploy (Render/Railway/Fly) → Add Firebase env.
 
 ### Render
 
-1. [render.com](https://render.com) → sign in with GitHub.
-2. **New** → **Web Service** → connect repo, branch **main**.
-3. **Root Directory:** `backend`. **Build:** `npm install`. **Start:** `node index.js`.
-4. **Environment:** Add `FIREBASE_SERVICE_ACCOUNT_JSON` (paste full JSON), optionally `OPENAI_API_KEY`, `ADMIN_SECRET`. Do not set `PORT`.
-5. Deploy. URL like `https://menyai-backend.onrender.com`. Use as `EXPO_PUBLIC_API_URL` and admin Backend URL.
+**Option A – Blueprint (recommended)**  
+1. [render.com](https://render.com) → sign in with GitHub.  
+2. **New** → **Blueprint** → connect the MenyAI repo, branch **main**.  
+3. Render will read **`render.yaml`** at the repo root and create the `menyai-backend` web service with **Root Directory** `backend`.  
+4. In the new service’s **Environment** tab, add:
+   - **FIREBASE_SERVICE_ACCOUNT_JSON** – paste the **entire** Firebase service account JSON as one line (from Firebase Console → Project settings → Service accounts → Generate new private key). Required.
+   - **OPENAI_API_KEY** – (optional) for AI chat.
+   - **ADMIN_SECRET** – (optional) for admin API; omit to use mock Admin/123.
+5. Do **not** set `PORT`; Render sets it automatically.  
+6. Deploy. Your backend URL will be like `https://menyai-backend.onrender.com`. Use it as **EXPO_PUBLIC_API_URL** in the mobile app and as the Backend URL in the admin panel.
+
+**Option B – Manual Web Service**  
+1. **New** → **Web Service** → connect repo, branch **main**.  
+2. **Root Directory:** `backend`. **Build command:** `npm install`. **Start command:** `node index.js`.  
+3. Add the same environment variables as in Option A, then deploy.
 
 ### Railway
 
@@ -319,6 +331,8 @@ Build on your machine with Gradle. No Expo account or EAS needed for this path.
    `mobile/android/app/build/outputs/apk/release/app-release.apk`
 
 3. **Install:** Copy the APK to your device, enable “Install from unknown sources” if prompted, and install.
+
+**If the app opens then closes immediately on your phone:** (1) Use the **release** APK from `build:apk` (not the dev build from `pnpm android`). (2) In **`mobile/.env`** set `EXPO_PUBLIC_API_URL` to your backend URL and rebuild the APK. (3) Ensure **`mobile/google-services.json`** has `"package_name": "com.menyai.kwigarwanda"`.
 
 If `pnpm run build:apk` fails (e.g. Gradle or SDK not found), run the steps manually:
 ```bash

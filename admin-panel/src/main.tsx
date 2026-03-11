@@ -1,13 +1,3 @@
-// Suppress React Router v7 future-flag warning in dev (we already opt in via createBrowserRouter options)
-if (typeof window !== "undefined" && (import.meta as { env?: { DEV?: boolean } }).env?.DEV) {
-  const orig = console.warn;
-  console.warn = (...args: unknown[]) => {
-    const msg = typeof args[0] === "string" ? args[0] : String(args[0] ?? "");
-    if (msg.includes("v7_startTransition") || msg.includes("React Router Future Flag")) return;
-    orig.apply(console, args);
-  };
-}
-
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
@@ -52,13 +42,7 @@ const router = createBrowserRouter(
     },
     { path: "*", element: <Navigate to="/" replace /> },
   ],
-  {
-    basename: import.meta.env.BASE_URL,
-    future: {
-      v7_startTransition: true,
-      v7_relativeSplatPath: true,
-    },
-  }
+  { basename: import.meta.env.BASE_URL }
 );
 
 function AppBoot() {

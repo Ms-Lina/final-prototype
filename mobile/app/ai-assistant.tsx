@@ -13,11 +13,13 @@ const INITIAL_MESSAGES: Message[] = [
   { id: "1", type: "ai" as const, text: "Muraho! Ndi MenyAI, umufasha wawe. Ufite ikibazo cyangwa ukenera ubufasha kuri iri somo?" },
 ];
 
-const FALLBACK_REPLY = "Ntabwo nashoboye gusubiza ubu. Wongere none cyangwa injira kugira ngo ube na AI.";
+const FALLBACK_AUTH = "Injira kugira ngo AI ikoreshwe (MenyAI Umufasha).";
+const FALLBACK_UNAVAILABLE = "AI ntabwo ishoboye ubu. Gerageza nyuma cyangwa uhuze umurongo.";
+const FALLBACK_NETWORK = "Ntabwo twashoboye kuvugana na seriveri. Gerageza nyuma.";
 
 export default function AIAssistantScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ lessonTitle?: string; lessonDesc?: string }>();
+  const params = useLocalSearchParams<{ lessonTitle?: string; lessonDesc?: string; lessonModule?: string }>();
   const { user } = useAuth();
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>(INITIAL_MESSAGES);
@@ -27,21 +29,34 @@ export default function AIAssistantScreen() {
   const lessonContext = useMemo(() => {
     const title = params.lessonTitle ?? "";
     const desc = params.lessonDesc ?? "";
-    if (!title && !desc) return undefined;
-    const raw = [title, desc].filter(Boolean).join(". ");
-    return raw.slice(0, 500) || undefined;
-  }, [params.lessonTitle, params.lessonDesc]);
+    const module = params.lessonModule ?? "";
+    if (!title && !desc && !module) return undefined;
+    const parts = [];
+    if (title) parts.push(`Isomo: ${title}`);
+    if (module) parts.push(`Moduli: ${module}`);
+    if (desc) parts.push(desc);
+    const raw = parts.join(". ");
+    return raw.slice(0, 1500) || undefined;
+  }, [params.lessonTitle, params.lessonDesc, params.lessonModule]);
 
-  const sendMessage = async () => {
-    const text = input.trim();
+  const sendMessage = async (presetText?: string) => {
+    const text = (presetText ?? input.trim()).trim();
     if (!text || loading) return;
-    setInput("");
+    if (!presetText) setInput("");
     const userMsg: Message = { id: Date.now().toString(), type: "user" as const, text };
     setMessages((m) => [...m, userMsg]);
     setLoading(true);
     const token = user ? await user.getIdToken() : null;
-    const reply = await api.postAiChat(text, token, { lessonContext });
-    setMessages((m) => [...m, { id: (Date.now() + 1).toString(), type: "ai" as const, text: reply ?? FALLBACK_REPLY }]);
+    const result = await api.postAiChat(text, token, { lessonContext });
+    let aiText: string;
+    if ("reply" in result) {
+      aiText = result.reply;
+    } else {
+      if (result.error === "auth") aiText = FALLBACK_AUTH;
+      else if (result.error === "unavailable") aiText = FALLBACK_UNAVAILABLE;
+      else aiText = FALLBACK_NETWORK;
+    }
+    setMessages((m) => [...m, { id: (Date.now() + 1).toString(), type: "ai" as const, text: aiText }]);
     setLoading(false);
   };
 
@@ -146,9 +161,11 @@ export default function AIAssistantScreen() {
           </View>
         ))}
 
-        {/* Quick action buttons */}
+        {/* Quick action buttons – send preset prompts with lesson context */}
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginTop: spacing.md }}>
           <TouchableOpacity
+            onPress={() => sendMessage("Sobanura neza")}
+            disabled={loading}
             style={{
               paddingVertical: spacing.sm,
               paddingHorizontal: spacing.md,
@@ -160,6 +177,8 @@ export default function AIAssistantScreen() {
             <Text style={{ fontSize: fontSize.xs, fontWeight: "600", color: colors.primary }}>Sobanura neza</Text>
           </TouchableOpacity>
           <TouchableOpacity
+            onPress={() => sendMessage("Mpa urugero")}
+            disabled={loading}
             style={{
               paddingVertical: spacing.sm,
               paddingHorizontal: spacing.md,
@@ -171,6 +190,8 @@ export default function AIAssistantScreen() {
             <Text style={{ fontSize: fontSize.xs, fontWeight: "600", color: colors.primary }}>Mpa urugero</Text>
           </TouchableOpacity>
           <TouchableOpacity
+            onPress={() => sendMessage("Komeza isomo")}
+            disabled={loading}
             style={{
               paddingVertical: spacing.sm,
               paddingHorizontal: spacing.md,
@@ -217,7 +238,7 @@ export default function AIAssistantScreen() {
           }}
         />
         <TouchableOpacity
-          onPress={sendMessage}
+          onPress={() => sendMessage()}
           disabled={loading}
           style={{
             width: 44,

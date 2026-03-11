@@ -13,7 +13,7 @@ const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, "../.env") });
 const { initFirebase, getDb } = require("../config/firebase");
 
-const BASE_URL = process.env.BASE_URL || "http://localhost:4000";
+const BASE_URL = process.env.BASE_URL || process.env.DEPLOYED_BACKEND_URL || "http://localhost:4000";
 const TOKEN = process.env.PROGRESS_TEST_TOKEN;
 
 async function testViaApi() {

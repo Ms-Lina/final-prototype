@@ -10,6 +10,7 @@ export const getBaseUrl = (): string => {
   if (typeof process !== "undefined" && process.env?.EXPO_PUBLIC_API_URL) {
     return process.env.EXPO_PUBLIC_API_URL.replace(/\/$/, "");
   }
+  // Emulator only: 10.0.2.2 is the host machine. On a real device, set EXPO_PUBLIC_API_URL in .env before building.
   if (Platform.OS === "android") {
     return "http://10.0.2.2:4000";
   }
@@ -227,7 +228,7 @@ export const api = {
     message: string,
     token?: string | null,
     options?: { lessonContext?: string }
-  ): Promise<string | null> {
+  ): Promise<{ reply: string } | { error: "auth" | "unavailable" | "network" }> {
     try {
       const res = await fetch(`${BASE_URL}/api/ai/chat`, {
         method: "POST",
@@ -242,11 +243,14 @@ export const api = {
             : {}),
         }),
       });
-      if (!res.ok) return null;
-      const data = await res.json();
-      return data.reply ?? null;
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) return { error: "auth" };
+      if (res.status === 503 || !res.ok) return { error: "unavailable" };
+      const reply = data.reply ?? null;
+      if (reply && typeof reply === "string") return { reply };
+      return { error: "unavailable" };
     } catch {
-      return null;
+      return { error: "network" };
     }
   },
 
@@ -336,25 +340,37 @@ export const api = {
     answers: any[],
     token?: string | null,
     options?: { timeSpent?: number; questionTimes?: number[] }
-  ): Promise<{ score: number; passed: boolean } | null> {
+  ): Promise<{ score: number; passed: boolean; error?: string } | null> {
     try {
-      const timeSpent = options?.timeSpent ?? 0;
-      const questionTimes = options?.questionTimes ?? [];
+      const timeSpent = Math.max(0, Number(options?.timeSpent) || 0);
+      const questionTimes = Array.isArray(options?.questionTimes) ? options.questionTimes.map(t => Math.max(0, Number(t) || 0)) : [];
+      // Normalize answers for backend: strings only; audio URI or non-string → "recorded" so backend counts as answered
+      const normalizedAnswers = answers.map((a) => {
+        if (a == null) return "";
+        if (typeof a === "string") return a.trim();
+        return "recorded"; // e.g. audio URI or any non-string answer
+      });
       const res = await fetch(`${BASE_URL}/api/lessons/${lessonId}/submit`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ answers, timeSpent, questionTimes }),
+        body: JSON.stringify({ answers: normalizedAnswers, timeSpent, questionTimes }),
       });
-      if (!res.ok) return null;
       const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = typeof data?.error === "string" ? data.error : data?.details ?? `Request failed (${res.status})`;
+        const details = typeof data?.details === "string" ? data.details : "";
+        const fullMsg = details ? `${msg}\n${details}` : msg;
+        return { score: 0, passed: false, error: fullMsg };
+      }
       const score = typeof data.score === "number" ? data.score : 0;
       const passed = Boolean(data.passed);
       return { score, passed };
-    } catch {
-      return null;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Network error";
+      return { score: 0, passed: false, error: message };
     }
   },
 

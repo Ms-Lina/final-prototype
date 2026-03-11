@@ -9,7 +9,8 @@ const { adminAuth } = require("../middleware/adminAuth");
 const router = express.Router();
 router.use(adminAuth);
 
-/** GET /api/admin/stats – dashboard counts */
+/** GET /api/admin/stats – dashboard counts.
+ * Progress is stored under users/{uid}/progress/overall (and lessonHistory), not top-level progress. */
 router.get("/stats", async (req, res) => {
   try {
     const db = getDb();
@@ -18,12 +19,12 @@ router.get("/stats", async (req, res) => {
     let totalUsers = 0;
     let totalProgressDocs = 0;
     if (db) {
-      const [lessonsSnap, progressSnap] = await Promise.all([
+      const [lessonsSnap, progressGroupSnap] = await Promise.all([
         db.collection("lessons").get(),
-        db.collection("progress").get(),
+        db.collectionGroup("progress").get(),
       ]);
       totalLessons = lessonsSnap.size;
-      totalProgressDocs = progressSnap.size;
+      totalProgressDocs = progressGroupSnap.size;
     }
     if (auth) {
       const list = await auth.listUsers(1000);
@@ -268,20 +269,24 @@ router.delete("/users/:uid", async (req, res) => {
   }
 });
 
-/** GET /api/admin/progress – list all progress docs from Firestore */
+/** GET /api/admin/progress – list progress from users/{uid}/progress/overall (same as app writes). */
 router.get("/progress", async (req, res) => {
   try {
     const db = getDb();
     if (!db) return res.status(503).json({ error: "Database not configured" });
-    const snap = await db.collection("progress").limit(200).get();
-    const progress = snap.docs.map((d) => ({ uid: d.id, ...d.data() }));
+    const snap = await db.collectionGroup("progress").limit(200).get();
+    const progress = snap.docs.map((d) => ({
+      uid: d.ref.parent.parent.id,
+      ...d.data(),
+      updatedAt: d.data().lastActivityAt || d.data().lastCompletedAt || d.data().updatedAt,
+    }));
     res.json({ progress });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-/** GET /api/admin/analytics – dashboard analytics (active users, lessons done, AI usage) */
+/** GET /api/admin/analytics – dashboard analytics from users/uid/progress and users/uid/lessonHistory. */
 router.get("/analytics", async (req, res) => {
   try {
     const db = getDb();
@@ -306,26 +311,38 @@ router.get("/analytics", async (req, res) => {
       activeUsers = list.users.filter((u) => !u.disabled).length;
     }
 
+    let totalLessonsForPercent = 0;
     if (db) {
-      const progressSnap = await db.collection("progress").get();
+      const [progressSnap, lessonHistorySnap, aiSnap, lessonsSnap] = await Promise.all([
+        db.collectionGroup("progress").get(),
+        db.collectionGroup("lessonHistory").get(),
+        db.collection("aiChatLogs").get(),
+        db.collection("lessons").get(),
+      ]);
+      totalLessonsForPercent = lessonsSnap.size;
+
       const progressList = progressSnap.docs.map((d) => d.data());
       for (const p of progressList) {
-        const completed = p.completedLessons ?? 0;
-        totalLessonsCompleted += completed;
-        const updated = p.updatedAt || "";
-        if (updated >= todayStart) lessonsCompletedToday += 1;
-        if (updated >= weekStartStr) lessonsCompletedThisWeek += 1;
+        totalLessonsCompleted += p.completedLessons ?? 0;
       }
 
-      const aiSnap = await db.collection("aiChatLogs").get();
+      lessonHistorySnap.docs.forEach((d) => {
+        const data = d.data();
+        if (data.passed !== true) return;
+        const completedAt = data.completedAt || data.updatedAt || "";
+        const completedStr = typeof completedAt === "string" ? completedAt : (completedAt && completedAt.toDate ? completedAt.toDate().toISOString() : "");
+        if (completedStr >= todayStart) lessonsCompletedToday += 1;
+        if (completedStr >= weekStartStr) lessonsCompletedThisWeek += 1;
+      });
+
       totalAIConversations = aiSnap.size;
       const uids = new Set(aiSnap.docs.map((d) => d.data().uid));
       uniqueAIVisitors = uids.size;
     }
 
     const aiUsagePercent = totalUsers > 0 ? Math.round((uniqueAIVisitors / totalUsers) * 100) : 0;
-    const avgProgressPercent = totalUsers > 0 && totalLessonsCompleted >= 0
-      ? Math.min(100, Math.round((totalLessonsCompleted / (totalUsers * 50)) * 100))
+    const avgProgressPercent = totalUsers > 0 && totalLessonsForPercent > 0
+      ? Math.min(100, Math.round((totalLessonsCompleted / (totalUsers * totalLessonsForPercent)) * 100))
       : 0;
 
     res.json({
@@ -458,8 +475,8 @@ router.get("/reports", async (req, res) => {
     const lessons = lessonsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
     const totalLessons = lessons.length;
 
-    // 2. All learner progress docs
-    const progressSnap = await db.collection("progress").get();
+    // 2. Learner progress from users/{uid}/progress/overall and users/{uid}/lessonHistory (same as app writes)
+    const progressSnap = await db.collectionGroup("progress").get();
     const learners = [];
     let totalCompletions = 0;
     let totalScoreSum = 0;
@@ -468,6 +485,7 @@ router.get("/reports", async (req, res) => {
     const lessonPassCounts = {}; // lessonId → { pass, fail }
 
     for (const doc of progressSnap.docs) {
+      const uid = doc.ref.parent.parent.id;
       const data = doc.data();
       const completed = data.completedLessons ?? 0;
       totalCompletions += completed;
@@ -480,8 +498,7 @@ router.get("/reports", async (req, res) => {
       else if (completed >= 6) badge = t.badges.silver;
       else if (completed >= 1) badge = t.badges.bronze;
 
-      // Lesson history sub-collection
-      const historySnap = await db.collection("progress").doc(doc.id).collection("history").get();
+      const historySnap = await db.collection("users").doc(uid).collection("lessonHistory").get();
       const history = historySnap.docs.map(h => ({ lessonId: h.id, ...h.data() }));
       const avgScore = history.length
         ? Math.round(history.reduce((s, h) => s + (h.score ?? 0), 0) / history.length)
@@ -494,12 +511,12 @@ router.get("/reports", async (req, res) => {
       });
 
       learners.push({
-        uid: doc.id,
+        uid,
         completedLessons: completed,
-        streakDays: data.streakDays ?? 0,
+        streakDays: data.currentStreak ?? data.streakDays ?? 0,
         badge,
         avgScore,
-        lastActive: data.updatedAt ?? null,
+        lastActive: data.lastActivityAt ?? data.lastCompletedAt ?? data.updatedAt ?? null,
         historyCount: history.length,
       });
     }

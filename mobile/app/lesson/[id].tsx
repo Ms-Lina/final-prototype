@@ -7,6 +7,7 @@ import { colors, spacing, fontSize, borderRadius } from "@/theme";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/Button";
 import YoutubePlayer from "react-native-youtube-iframe";
+// expo-av is deprecated in SDK 54; plan to migrate to expo-audio for recording
 import { Audio } from "expo-av";
 import { useAuth } from "@/lib/auth-context";
 import { copy } from "@/lib/copy";
@@ -36,6 +37,10 @@ export default function ActiveLessonScreen() {
   const playerRef = useRef<any>(null);
   const videoStartSecondsRef = useRef(0);
 
+  const MIN_VIDEO_SECONDS = 30;
+  const [videoWatchedSeconds, setVideoWatchedSeconds] = useState(0);
+  const videoWatchedEnough = !lesson?.videoUrl || videoWatchedSeconds >= MIN_VIDEO_SECONDS;
+
   // Audio recording state
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
 
@@ -58,7 +63,9 @@ export default function ActiveLessonScreen() {
             const p = progressRes.progress;
             initialStep = Math.min(Math.max(0, p.currentStep), len);
             totalTimeSpentStoredRef.current = p.totalTimeSpent || 0;
-            videoStartSecondsRef.current = p.videoProgressSeconds || 0;
+            const savedVideoSec = p.videoProgressSeconds || 0;
+            videoStartSecondsRef.current = savedVideoSec;
+            setVideoWatchedSeconds((prev) => Math.max(prev, savedVideoSec));
             if (Array.isArray(p.answers) && p.answers.length) {
               initialAnswers = p.answers.slice(0, len);
               while (initialAnswers.length < len) initialAnswers.push("");
@@ -124,6 +131,20 @@ export default function ActiveLessonScreen() {
     return () => clearInterval(t);
   }, [id, lesson]);
 
+  useEffect(() => {
+    if (!lesson?.videoUrl || currentStep !== 0) return;
+    const interval = setInterval(async () => {
+      try {
+        const t = playerRef.current?.getCurrentTime;
+        if (typeof t === "function") {
+          const sec = Math.round(await t()) || 0;
+          setVideoWatchedSeconds((prev) => Math.max(prev, sec));
+        }
+      } catch (_) {}
+    }, 1500);
+    return () => clearInterval(interval);
+  }, [lesson?.videoUrl, currentStep]);
+
   const handleNext = async () => {
     const activities = lesson?.activities ?? [];
     const isVideoStep = currentStep === 0;
@@ -173,24 +194,41 @@ export default function ActiveLessonScreen() {
     const activities = lesson?.activities ?? [];
     const len = activities.length;
     const toSend = [...answers];
-    if (len > 0 && currentStep >= 1 && (toSend[currentStep - 1] === undefined || toSend[currentStep - 1] === "") && selectedAnswer) {
-      toSend[currentStep - 1] = selectedAnswer;
+    // Sync current step's answer (state can lag); use selectedAnswer first, else existing answers[]
+    if (len > 0 && currentStep >= 1 && currentStep <= len) {
+      const currentAnswer = selectedAnswer ?? answers[currentStep - 1];
+      if (currentAnswer !== undefined && currentAnswer !== null) {
+        toSend[currentStep - 1] = typeof currentAnswer === "string" ? currentAnswer.trim() : currentAnswer;
+      }
     }
+    // Ensure we have an entry for every activity (pad with "" so backend receives correct length)
+    while (toSend.length < len) toSend.push("");
     setIsSubmitting(true);
     try {
       const timeSpent = Math.round((Date.now() - lessonStartTime.current) / 1000);
       const token = user ? await user.getIdToken() : null;
+      if (!token) {
+        Alert.alert(copy.common.error, "Injira kugira ngo uohereze igisubizo.");
+        setIsSubmitting(false);
+        return;
+      }
       const res = await api.submitLesson(id!, toSend, token, {
         timeSpent,
         questionTimes: questionTimings,
       });
+      if (res?.error) {
+        Alert.alert(copy.common.error, res.error || copy.lessons.submitError);
+        return;
+      }
       if (res && typeof res.score === "number") {
         setScore({ score: res.score, passed: !!res.passed });
+        // Confirmation: result screen shows "Urakoze! Igisubizo cyawe cyakiriwe" and score
       } else {
-        Alert.alert(copy.common.error, copy.lessons.submitError);
+        Alert.alert(copy.common.error, copy.lessons.submitError + " (Injira cyangwa gerageza nyuma.)");
       }
     } catch (err) {
-      Alert.alert(copy.common.error, copy.lessons.submitError);
+      const msg = err instanceof Error ? err.message : copy.lessons.submitError;
+      Alert.alert(copy.common.error, msg + " (Injira cyangwa gerageza nyuma.)");
     } finally {
       setIsSubmitting(false);
     }
@@ -280,6 +318,16 @@ export default function ActiveLessonScreen() {
           style={{ flex: 1 }}
         >
           <View style={{ alignItems: "center", width: "100%", maxWidth: 360 }}>
+            {score.passed && (
+              <>
+                <Text style={{ fontSize: fontSize.base, fontWeight: "600", color: colors.success, marginBottom: spacing.xs }}>
+                  Urakoze! Igisubizo cyawe cyakiriwe.
+                </Text>
+                <Text style={{ fontSize: fontSize.sm, color: colors.mutedForeground, marginBottom: spacing.sm, textAlign: "center" }}>
+                  {copy.lessons.resultPassSubtitle}
+                </Text>
+              </>
+            )}
             <Text style={{ fontSize: fontSize.sm, fontWeight: "600", color: colors.mutedForeground, marginBottom: spacing.sm, textTransform: "uppercase" }}>
               {score.passed ? "Impamyabushobozi" : "Igisubizo"}
             </Text>
@@ -392,11 +440,13 @@ export default function ActiveLessonScreen() {
           </Text>
         </View>
         <TouchableOpacity
-          onPress={() =>
-            router.push(
-              `/ai-assistant?lessonTitle=${encodeURIComponent(lesson.title)}&lessonDesc=${encodeURIComponent((lesson.description || "").slice(0, 200))}`
-            )
-          }
+          onPress={() => {
+            const title = lesson.title || "";
+            const desc = (lesson.description || "").slice(0, 400);
+            const module = (lesson.module || "").slice(0, 80);
+            const q = new URLSearchParams({ lessonTitle: title, lessonDesc: desc, lessonModule: module });
+            router.push(`/ai-assistant?${q.toString()}`);
+          }}
           style={{
             padding: spacing.sm,
             borderRadius: borderRadius.md,
@@ -564,10 +614,15 @@ export default function ActiveLessonScreen() {
       </ScrollView>
 
       <View style={{ padding: spacing.md, borderTopWidth: 1, borderTopColor: colors.border }}>
+        {isVideoStep && lesson?.videoUrl && !videoWatchedEnough && (
+          <Text style={{ fontSize: fontSize.xs, color: colors.mutedForeground, marginBottom: spacing.sm, textAlign: "center" }}>
+            Reba videwo nkadogo ({MIN_VIDEO_SECONDS}s) kugira utangire ibibazo. ({videoWatchedSeconds}s / {MIN_VIDEO_SECONDS}s)
+          </Text>
+        )}
         <Button
           title={isVideoStep ? copy.lessons.startExercises : (currentStep === activities.length ? copy.lessons.submit : copy.lessons.next)}
           onPress={handleNext}
-          disabled={!isVideoStep && !answers[currentStep - 1] && currentActivity.type !== "audio"}
+          disabled={(isVideoStep && !videoWatchedEnough) || (!isVideoStep && !answers[currentStep - 1] && !selectedAnswer && currentActivity?.type !== "audio")}
           loading={isSubmitting}
         />
       </View>

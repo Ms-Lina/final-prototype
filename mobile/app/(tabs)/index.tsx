@@ -3,6 +3,7 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useEffect, useState, useCallback } from "react";
+import { useFocusEffect } from "@react-navigation/native";
 import { colors, spacing, fontSize, borderRadius } from "@/theme";
 import { useAuth } from "@/lib/auth-context";
 import { api } from "@/lib/api";
@@ -69,6 +70,13 @@ export default function HomeScreen() {
     setLoading(true);
     loadData();
   }, [user?.uid, loadData]);
+
+  // Refetch when tab gains focus (e.g. after completing a lesson) so numbers stay in sync
+  useFocusEffect(
+    useCallback(() => {
+      if (user) loadData();
+    }, [user, loadData])
+  );
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);

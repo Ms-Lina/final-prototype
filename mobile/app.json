@@ -36,7 +36,8 @@
       },
       "eas": {
         "projectId": "53ba6a78-b338-4fb0-b4f5-4964663f9607"
-      }
+      },
+      "expoFontTimeout": 15000
     }
   }
 }

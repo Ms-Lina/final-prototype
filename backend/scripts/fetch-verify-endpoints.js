@@ -1,16 +1,22 @@
 /**
  * Verify backend and AI by fetching key endpoints.
- * Run from repo root: node backend/scripts/fetch-verify-endpoints.js
- * Requires backend running on PORT (default 4000).
+ * Local: node backend/scripts/fetch-verify-endpoints.js  (uses PORT, default localhost:4000)
+ * Deployed: BASE_URL=https://menyai-nslw.onrender.com node backend/scripts/fetch-verify-endpoints.js
+ * Or set DEPLOYED_BACKEND_URL in backend/.env and run without BASE_URL to verify deployed.
  */
+const path = require("path");
+require("dotenv").config({ path: path.join(__dirname, "../.env") });
 const http = require("http");
+const https = require("https");
 
 const PORT = process.env.PORT || 4000;
-const BASE = `http://localhost:${PORT}`;
+const BASE = (process.env.BASE_URL || process.env.DEPLOYED_BACKEND_URL || "").replace(/\/$/, "") || `http://localhost:${PORT}`;
+const isHttps = BASE.startsWith("https");
+const client = isHttps ? https : http;
 
 function fetch(url) {
   return new Promise((resolve, reject) => {
-    const req = http.get(url, { timeout: 8000 }, (res) => {
+    const req = client.get(url, { timeout: 15000 }, (res) => {
       let body = "";
       res.on("data", (ch) => (body += ch));
       res.on("end", () => {
@@ -31,7 +37,8 @@ function fetch(url) {
 }
 
 async function main() {
-  console.log("MenyAI endpoint verification\n");
+  console.log("MenyAI endpoint verification");
+  console.log("BASE:", BASE, "\n");
   const results = { ok: [], fail: [] };
 
   // Health
@@ -43,7 +50,7 @@ async function main() {
       results.fail.push(`GET /health → ${r.status} ${JSON.stringify(r.data)}`);
     }
   } catch (e) {
-    results.fail.push(`GET /health → ${e.message} (is backend running on ${PORT}?)`);
+    results.fail.push(`GET /health → ${e.message} (is backend running at ${BASE}?)`);
   }
 
   // AI health

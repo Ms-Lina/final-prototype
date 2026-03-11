@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { Redirect } from "expo-router";
-import { View, ActivityIndicator, StyleSheet } from "react-native";
+import { View, ActivityIndicator, StyleSheet, Platform } from "react-native";
 import * as SplashScreen from "expo-splash-screen";
 import { useAuth } from "@/lib/auth-context";
 import { colors } from "@/theme";
@@ -35,5 +35,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     backgroundColor: colors.background,
-  },
+    ...(Platform.OS === "web" ? { minHeight: "100vh" } : {}),
+  } as Record<string, unknown>,
 });

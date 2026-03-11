@@ -26,6 +26,39 @@ function nextBadge(completed) {
   return { label: "Inzibacyuho 🥉", needsTotal: 1, remaining: 1 - completed };
 }
 
+/** Derive score from results/breakdown when top-level score is missing (e.g. legacy docs). */
+function deriveScore(data) {
+  if (typeof data.score === "number" && !Number.isNaN(data.score)) return Math.round(data.score);
+  const results = data.results || data.breakdown || [];
+  if (!Array.isArray(results) || results.length === 0) return 0;
+  const sum = results.reduce((acc, r) => acc + (typeof r.score === "number" ? r.score : 0), 0);
+  return Math.round(sum / results.length);
+}
+
+/** Normalize a lesson history item so the app always gets consistent types. Match Lessons page progress tiers: passed=100, videoWatched=50, descriptionRead=30. */
+function normalizeHistoryItem(docId, data) {
+  const updatedAt = data.updatedAt ?? data.completedAt;
+  const updatedAtStr = updatedAt && typeof updatedAt.toDate === "function"
+    ? updatedAt.toDate().toISOString()
+    : (typeof updatedAt === "string" ? updatedAt : new Date().toISOString());
+  let score = typeof data.score === "number" && !Number.isNaN(data.score) ? Math.round(data.score) : deriveScore(data);
+  if (data.passed === true) {
+    score = Math.max(score, 100);
+  } else if (score === 0) {
+    if (data.videoWatched) score = 50;
+    else if (data.descriptionRead) score = 30;
+  }
+  return {
+    lessonId: docId,
+    score,
+    passed: data.passed === true,
+    attempts: typeof data.attempts === "number" ? data.attempts : 1,
+    updatedAt: updatedAtStr,
+    descriptionRead: !!data.descriptionRead,
+    videoWatched: !!data.videoWatched,
+  };
+}
+
 router.get("/", async (req, res) => {
   try {
     const decoded = await verifyIdToken(req);
@@ -35,8 +68,13 @@ router.get("/", async (req, res) => {
     // Use same query as GET /api/lessons so totalLessons matches what the app displays
     let totalLessons = 0;
     if (db) {
-      const lessonsSnap = await db.collection("lessons").orderBy("order").get();
-      totalLessons = lessonsSnap.size;
+      try {
+        const lessonsSnap = await db.collection("lessons").orderBy("order").get();
+        totalLessons = lessonsSnap.size;
+      } catch (err) {
+        const lessonsSnap = await db.collection("lessons").get();
+        totalLessons = lessonsSnap.size;
+      }
     }
 
     let completedLessons = 0;
@@ -47,23 +85,18 @@ router.get("/", async (req, res) => {
     if (db && uid) {
       // Primary: lesson history from users/uid/lessonHistory (written by POST /api/lessons/:id/submit)
       const lessonHistorySnap = await db.collection("users").doc(uid).collection("lessonHistory").get();
-      lessonHistory = lessonHistorySnap.docs.map(doc => ({ lessonId: doc.id, ...doc.data() }));
+      lessonHistory = lessonHistorySnap.docs.map(doc => normalizeHistoryItem(doc.id, doc.data()));
 
       // Fallback: if empty, also read from progress/uid/history (written by POST /api/progress/submit) so UI matches either path
       if (lessonHistory.length === 0) {
         const legacyHistorySnap = await db.collection("progress").doc(uid).collection("history").get();
-        lessonHistory = legacyHistorySnap.docs.map(doc => {
-          const d = doc.data();
-          return { lessonId: doc.id, score: d.score, passed: d.passed, attempts: d.attempts, updatedAt: d.updatedAt, completedAt: d.updatedAt };
-        });
+        lessonHistory = legacyHistorySnap.docs.map(doc => normalizeHistoryItem(doc.id, doc.data()));
       }
 
       completedLessons = lessonHistory.filter(h => h.passed === true).length;
 
-      // Average score from completed lessons
-      const scores = lessonHistory
-        .map(h => h.score)
-        .filter(score => typeof score === 'number');
+      // Average score from lessons that have a numeric score (all history items are normalized to have score number)
+      const scores = lessonHistory.map(h => h.score).filter(s => typeof s === "number" && s > 0);
       if (scores.length > 0) {
         averageScore = Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length);
       }
@@ -111,28 +144,10 @@ router.get("/history", async (req, res) => {
     if (!db || !uid) return res.json({ history: [] });
 
     const snap = await db.collection("users").doc(uid).collection("lessonHistory").get();
-    let history = snap.docs.map(doc => {
-      const d = doc.data();
-      return {
-        lessonId: doc.id,
-        score: d.score ?? 0,
-        passed: d.passed ?? false,
-        attempts: d.attempts ?? 1,
-        updatedAt: d.completedAt ?? d.updatedAt ?? new Date().toISOString(),
-      };
-    });
+    let history = snap.docs.map(doc => normalizeHistoryItem(doc.id, doc.data()));
     if (history.length === 0) {
       const legacySnap = await db.collection("progress").doc(uid).collection("history").get();
-      history = legacySnap.docs.map(doc => {
-        const d = doc.data();
-        return {
-          lessonId: doc.id,
-          score: d.score ?? 0,
-          passed: d.passed ?? false,
-          attempts: d.attempts ?? 1,
-          updatedAt: d.updatedAt ?? new Date().toISOString(),
-        };
-      });
+      history = legacySnap.docs.map(doc => normalizeHistoryItem(doc.id, doc.data()));
     }
     res.json({ history });
   } catch (e) {

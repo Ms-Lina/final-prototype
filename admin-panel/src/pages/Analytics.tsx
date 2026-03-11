@@ -11,7 +11,7 @@ import {
   BookMarked,
   Flame,
 } from "lucide-react";
-import { api, type Stats, type Lesson, type Progress as ProgressType } from "../lib/api";
+import { fetchStats, fetchLessons, fetchProgress, type Stats, type Lesson, type Progress as ProgressType } from "../lib/admin-api";
 
 type AnalyticsData = {
   stats: Stats | null;
@@ -37,9 +37,9 @@ export default function Analytics() {
     setData((d) => ({ ...d, loading: true, error: "" }));
     try {
       const [stats, lessonsRes, progressRes] = await Promise.all([
-        api<Stats>("/api/admin/stats"),
-        api<{ lessons: Lesson[] }>("/api/admin/lessons").catch(() => ({ lessons: [] })),
-        api<{ progress: ProgressType[] }>("/api/admin/progress").catch(() => ({ progress: [] })),
+        fetchStats(),
+        fetchLessons().catch(() => ({ lessons: [] })),
+        fetchProgress().catch(() => ({ progress: [] })),
       ]);
       setData({
         stats,

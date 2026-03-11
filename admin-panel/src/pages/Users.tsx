@@ -1,26 +1,18 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Trash2 } from "lucide-react";
-import { api, type User } from "../lib/api";
+import { useAdminData } from "../hooks/useAdminData";
+import { fetchUsers, deleteUser } from "../lib/admin-api";
 
 const SECTOR_OPTIONS = ["", "Kacyiru", "Gikondo"];
 
 export default function Users() {
-  const [users, setUsers] = useState<User[]>([]);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
   const [sectorFilter, setSectorFilter] = useState("");
-
-  const load = () => {
-    setLoading(true);
-    setError("");
-    const url = sectorFilter ? `/api/admin/users?sector=${encodeURIComponent(sectorFilter)}` : "/api/admin/users";
-    api<{ users: User[] }>(url)
-      .then((r) => setUsers(r.users))
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(() => load(), [sectorFilter]);
+  const [actionError, setActionError] = useState("");
+  const { data: usersData, loading, error, reload: load } = useAdminData(
+    () => fetchUsers(sectorFilter || undefined).then((r) => r.users),
+    [sectorFilter]
+  );
+  const users = usersData ?? [];
 
   if (loading && users.length === 0) {
     return (
@@ -72,6 +64,7 @@ export default function Users() {
         </div>
       </div>
       {error && <div className="admin-alert admin-alert-error">{error}</div>}
+      {actionError && <div className="admin-alert admin-alert-error">{actionError}</div>}
       <div className="admin-table-wrap">
         <table className="admin-table">
           <thead>
@@ -101,9 +94,9 @@ export default function Users() {
                     title="Delete account"
                     onClick={() => {
                       if (!confirm(`Delete account for ${u.displayName ?? u.uid}? This removes the user and all their data permanently.`)) return;
-                      api(`/api/admin/users/${u.uid}`, { method: "DELETE" })
-                        .then(() => load())
-                        .catch((e) => setError(e.message));
+                      deleteUser(u.uid)
+                        .then(() => { setActionError(""); load(); })
+                        .catch((e) => setActionError(e.message));
                     }}
                   >
                     <Trash2 size={14} />

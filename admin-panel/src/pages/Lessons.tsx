@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type Lesson } from "../lib/api";
+import { fetchLessons, createLesson, updateLesson, deleteLesson as deleteLessonApi, type Lesson } from "../lib/admin-api";
 import { Search, Download, Trash2, Edit, Plus, Eye, EyeOff, Copy, ListOrdered, Type } from "lucide-react";
 
 export default function Lessons() {
@@ -27,7 +27,7 @@ export default function Lessons() {
 
   const load = () => {
     setLoading(true);
-    api<{ lessons: Lesson[] }>("/api/admin/lessons")
+    fetchLessons()
       .then((r) => {
         setLessons(r.lessons);
         setFilteredLessons(r.lessons);
@@ -119,7 +119,7 @@ export default function Lessons() {
     
     try {
       await Promise.all(
-        selectedLessons.map(id => api(`/api/admin/lessons/${id}`, { method: "DELETE" }))
+        selectedLessons.map((id) => deleteLessonApi(id))
       );
       setSelectedLessons([]);
       load();
@@ -131,10 +131,7 @@ export default function Lessons() {
   const bulkToggleStatus = async (enabled: boolean) => {
     try {
       await Promise.all(
-        selectedLessons.map(id => api(`/api/admin/lessons/${id}`, {
-          method: "PUT",
-          body: JSON.stringify({ enabled })
-        }))
+        selectedLessons.map((id) => updateLesson(id, { enabled }))
       );
       setSelectedLessons([]);
       load();
@@ -151,10 +148,7 @@ export default function Lessons() {
         order: lessons.length
       };
       delete (newLesson as any).id;
-      await api("/api/admin/lessons", {
-        method: "POST",
-        body: JSON.stringify(newLesson)
-      });
+      await createLesson(newLesson);
       load();
     } catch (e) {
       setError("Failed to duplicate lesson");
@@ -176,20 +170,17 @@ export default function Lessons() {
     e.preventDefault();
     if (!form.title.trim()) return;
     try {
-      await api("/api/admin/lessons", {
-        method: "POST",
-        body: JSON.stringify({
-          title: form.title.trim(),
-          duration: form.duration.trim() || undefined,
-          level: form.level.trim() || undefined,
-          order: form.order,
-          description: form.description.trim() || undefined,
-          difficulty: form.difficulty.trim() || undefined,
-          enabled: form.enabled,
-          videoUrl: form.videoUrl.trim() || undefined,
-          activities: form.activities,
-          type: form.type
-        }),
+      await createLesson({
+        title: form.title.trim(),
+        duration: form.duration.trim() || undefined,
+        level: form.level.trim() || undefined,
+        order: form.order,
+        description: form.description.trim() || undefined,
+        difficulty: form.difficulty.trim() || undefined,
+        enabled: form.enabled,
+        videoUrl: form.videoUrl.trim() || undefined,
+        activities: form.activities,
+        type: form.type,
       });
       closeModal();
       load();
@@ -203,19 +194,16 @@ export default function Lessons() {
     if (typeof modal !== "object" || modal === null || !form.title.trim()) return;
     const lessonId = modal.id;
     try {
-      await api(`/api/admin/lessons/${lessonId}`, {
-        method: "PUT",
-        body: JSON.stringify({
-          title: form.title.trim(),
-          duration: form.duration.trim() || undefined,
-          level: form.level.trim() || undefined,
-          order: form.order,
-          description: form.description.trim() || undefined,
-          difficulty: form.difficulty.trim() || undefined,
-          enabled: form.enabled,
-          videoUrl: form.videoUrl.trim() || undefined,
-          activities: form.activities,
-        }),
+      await updateLesson(lessonId, {
+        title: form.title.trim(),
+        duration: form.duration.trim() || undefined,
+        level: form.level.trim() || undefined,
+        order: form.order,
+        description: form.description.trim() || undefined,
+        difficulty: form.difficulty.trim() || undefined,
+        enabled: form.enabled,
+        videoUrl: form.videoUrl.trim() || undefined,
+        activities: form.activities,
       });
       closeModal();
       load();
@@ -227,7 +215,7 @@ export default function Lessons() {
   const deleteLesson = async (id: string) => {
     if (!confirm("Delete this lesson?")) return;
     try {
-      await api(`/api/admin/lessons/${id}`, { method: "DELETE" });
+      await deleteLessonApi(id);
       load();
     } catch (e) {
       setError("Failed to delete lesson");

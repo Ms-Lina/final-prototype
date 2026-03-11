@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { MessageCircle, Users, Activity, RefreshCw } from "lucide-react";
-import { api, type AILog, type AIStats } from "../lib/api";
+import { fetchAIStats, fetchAILogs, type AILog, type AIStats } from "../lib/admin-api";
 
 export default function AIMonitoring() {
   const [stats, setStats] = useState<AIStats | null>(null);
@@ -14,7 +14,7 @@ export default function AIMonitoring() {
   const loadStats = () => {
     setLoading(true);
     setError("");
-    api<AIStats>("/api/admin/ai-stats")
+    fetchAIStats()
       .then(setStats)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
@@ -22,8 +22,7 @@ export default function AIMonitoring() {
 
   const loadLogs = (after?: string) => {
     if (!after) setLogsLoading(true);
-    const url = after ? `/api/admin/ai-logs?limit=30&after=${encodeURIComponent(after)}` : "/api/admin/ai-logs?limit=30";
-    api<{ logs: AILog[]; nextAfter: string | null }>(url)
+    fetchAILogs({ limit: 30, after })
       .then((r) => {
         if (after) setLogs((prev) => [...prev, ...r.logs]);
         else setLogs(r.logs);

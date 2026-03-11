@@ -2,7 +2,7 @@ import { View, Text, ScrollView, TouchableOpacity, Alert } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { colors, spacing, fontSize, borderRadius } from "@/theme";
+import { colors, spacing, fontSize, borderRadius, cardShadow } from "@/theme";
 import { useAuth } from "@/lib/auth-context";
 import { api } from "@/lib/api";
 
@@ -81,10 +81,7 @@ export default function AccountScreen() {
             borderColor: colors.border,
             width: "100%",
             maxWidth: 400,
-            shadowColor: "#000",
-            shadowOffset: { width: 0, height: 2 },
-            shadowOpacity: 0.08,
-            shadowRadius: 8,
+            ...cardShadow({ color: "#000", offset: { width: 0, height: 2 }, opacity: 0.08, radius: 8 }),
             elevation: 2,
           }}
         >
@@ -109,10 +106,7 @@ export default function AccountScreen() {
             borderColor: colors.border,
             width: "100%",
             maxWidth: 400,
-            shadowColor: "#000",
-            shadowOffset: { width: 0, height: 2 },
-            shadowOpacity: 0.08,
-            shadowRadius: 8,
+            ...cardShadow({ color: "#000", offset: { width: 0, height: 2 }, opacity: 0.08, radius: 8 }),
             elevation: 2,
           }}
         >

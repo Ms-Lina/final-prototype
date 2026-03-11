@@ -76,13 +76,21 @@ export async function api<T>(path: string, options?: RequestInit): Promise<T> {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
+    if (res.status === 401) {
+      clearAdminKey();
+      if (typeof window !== "undefined" && window.location.pathname !== "/login" && !window.location.pathname.endsWith("/login")) {
+        window.location.href = (import.meta.env.BASE_URL || "/").replace(/\/$/, "") + "/login";
+      }
+    }
     const msg = (data as { error?: string }).error || res.statusText;
     const friendly =
       res.status === 503 && msg
         ? msg
         : res.status === 503
           ? "Backend or database unavailable. Start the backend (port 4000) and set FIREBASE_SERVICE_ACCOUNT_JSON in backend/.env."
-          : msg;
+          : res.status === 401
+            ? "Unauthorized. Log in with the admin password (must match ADMIN_SECRET on the server)."
+            : msg;
     if (res.status === 503) {
       _backendUnavailable = true;
       if (!_warned503) {

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { BookOpen, Users, Activity, RefreshCw, MessageCircle, Target, TrendingUp } from "lucide-react";
-import { api, type Stats, type Analytics } from "../lib/api";
+import { fetchStats, fetchAnalytics, type Stats, type Analytics } from "../lib/admin-api";
 
 const CARD_ICON_SIZE = 22;
 
@@ -14,8 +14,8 @@ export default function Dashboard() {
     setLoading(true);
     setError("");
     Promise.all([
-      api<Stats>("/api/admin/stats"),
-      api<Analytics>("/api/admin/analytics").catch(() => null),
+      fetchStats(),
+      fetchAnalytics().catch(() => null),
     ])
       .then(([s, a]) => {
         setStats(s);

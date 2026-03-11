@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { setAdminKey, clearAdminKey, api } from "../lib/api";
+import { setAdminKey, clearAdminKey } from "../lib/api";
+import { fetchStats } from "../lib/admin-api";
 
 const MOCK_USERNAME = "Admin";
 const MOCK_PASSWORD = "123";
@@ -24,10 +25,11 @@ export default function Login() {
       setAdminKey(MOCK_PASSWORD);
       setLoading(true);
       try {
-        await api<{ totalLessons: number }>("/api/admin/stats");
+        await fetchStats();
         navigate("/", { replace: true });
-      } catch {
-        setError("Backend not reachable. Check Settings for Backend URL.");
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "";
+        setError(msg.includes("401") || msg.includes("Unauthorized") ? "Wrong admin key. Set ADMIN_SECRET on the server to match (e.g. 123)." : "Backend not reachable. Check Settings for Backend URL.");
         clearAdminKey();
       } finally {
         setLoading(false);
@@ -37,10 +39,11 @@ export default function Login() {
     setLoading(true);
     try {
       setAdminKey(password.trim());
-      await api<{ totalLessons: number }>("/api/admin/stats");
+      await fetchStats();
       navigate("/", { replace: true });
-    } catch {
-      setError("Invalid credentials.");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      setError(msg.includes("401") || msg.includes("Unauthorized") ? "Wrong admin key. The password must match ADMIN_SECRET on the server." : "Invalid credentials.");
       clearAdminKey();
     } finally {
       setLoading(false);

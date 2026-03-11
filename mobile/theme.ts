@@ -1,7 +1,12 @@
+import { cardShadow as getCardShadow } from "@/lib/shadowStyles";
+
 /**
  * MenyAI – design system (matches menyai-ui-design.html)
  * Primary: #2D9B5F, Dark: #1F7A47
  */
+/** Use instead of inline shadowColor/shadowOffset/shadowOpacity/shadowRadius (fixes web deprecation). */
+export const cardShadow = getCardShadow;
+
 export const colors = {
   primary: "#2D9B5F",
   primaryDark: "#1F7A47",

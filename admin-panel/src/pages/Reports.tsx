@@ -1,58 +1,10 @@
-import { useEffect, useState } from "react";
-import { api } from "../lib/api";
-
-type LearnerRow = {
-    uid: string;
-    completedLessons: number;
-    streakDays: number;
-    badge: string;
-    avgScore: number | null;
-    lastActive: string | null;
-    historyCount: number;
-};
-
-type LessonRow = {
-    id: string;
-    title: string;
-    module: string;
-    order: number;
-    passCount: number;
-    failCount: number;
-    totalAttempts: number;
-    passRate: number | null;
-};
-
-type Summary = {
-    totalLessons: number;
-    totalLearners: number;
-    totalCompletions: number;
-    avgClassScore: number;
-    badgeCounts: Record<string, number>;
-};
-
-type ReportData = {
-    summary: Summary;
-    learners: LearnerRow[];
-    lessonReport: LessonRow[];
-    generatedAt: string;
-};
+import { useState } from "react";
+import { useAdminData } from "../hooks/useAdminData";
+import { fetchReports } from "../lib/admin-api";
 
 export default function Reports() {
-    const [data, setData] = useState<ReportData | null>(null);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState("");
+    const { data, loading, error, reload: load } = useAdminData(fetchReports, []);
     const [tab, setTab] = useState<"summary" | "learners" | "lessons">("summary");
-
-    const load = () => {
-        setLoading(true);
-        setError("");
-        api<ReportData>("/api/admin/reports")
-            .then(setData)
-            .catch((e) => setError(e.message))
-            .finally(() => setLoading(false));
-    };
-
-    useEffect(() => load(), []);
 
     const exportCSV = () => {
         if (!data) return;

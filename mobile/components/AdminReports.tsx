@@ -6,6 +6,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Dimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, fontSize, borderRadius } from '@/theme';
+import { getBaseUrl } from '@/lib/api';
 
 const { width } = Dimensions.get('window');
 
@@ -64,7 +65,8 @@ const AdminReports: React.FC<AdminReportsProps> = ({ onLanguageChange }) => {
   const fetchReports = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`http://localhost:4000/api/admin/reports?lang=${language}`);
+      const base = getBaseUrl();
+      const response = await fetch(`${base}/api/admin/reports?lang=${language}`);
       const data = await response.json();
       setReports(data);
     } catch (error) {

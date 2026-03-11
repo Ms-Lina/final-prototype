@@ -1,11 +1,23 @@
-import { View } from "react-native";
+import { View, Platform, StyleSheet } from "react-native";
 import { Stack, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { AuthProvider } from "@/lib/auth-context";
 import { BottomNav } from "@/components/BottomNav";
+import { AppErrorBoundary } from "@/components/AppErrorBoundary";
 
-SplashScreen.preventAutoHideAsync();
+try {
+  SplashScreen.preventAutoHideAsync();
+} catch {
+  // ignore if splash not available (e.g. in some dev environments)
+}
+
+const rootStyles = StyleSheet.create({
+  root: {
+    flex: 1,
+    ...(Platform.OS === "web" ? { minHeight: "100vh" } : {}),
+  } as { flex: number; minHeight?: string },
+});
 
 export default function RootLayout() {
   const segments = useSegments();
@@ -13,12 +25,14 @@ export default function RootLayout() {
   const showBottomNav = isInTabs;
 
   return (
-    <AuthProvider>
-      <View style={{ flex: 1 }}>
-        <StatusBar style="dark" />
-        <Stack screenOptions={{ headerShown: false }} />
-        {showBottomNav && <BottomNav />}
-      </View>
-    </AuthProvider>
+    <AppErrorBoundary>
+      <AuthProvider>
+        <View style={rootStyles.root}>
+          <StatusBar style="dark" />
+          <Stack screenOptions={{ headerShown: false }} />
+          {showBottomNav && <BottomNav />}
+        </View>
+      </AuthProvider>
+    </AppErrorBoundary>
   );
 }

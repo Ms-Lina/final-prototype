@@ -142,6 +142,30 @@ router.post("/:id/progress", async (req, res) => {
  * POST /api/lessons/:id/submit
  * Enhanced lesson submission with detailed analytics
  */
+/** Remove undefined values so Firestore accepts the object. Keep array length; only strip undefined from object values. */
+function stripUndefined(obj) {
+  if (obj == null) return null;
+  if (typeof obj !== "object") return obj;
+  if (Array.isArray(obj)) return obj.map(v => (v === undefined ? null : stripUndefined(v)));
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v === undefined) continue;
+    try {
+      const cleaned = stripUndefined(v);
+      if (cleaned !== undefined) out[k] = cleaned;
+    } catch (_) {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+/** Ensure value is a number Firestore accepts (no NaN/Infinity) */
+function safeNumber(n) {
+  if (typeof n !== "number" || Number.isNaN(n) || !Number.isFinite(n)) return 0;
+  return n;
+}
+
 router.post("/:id/submit", async (req, res) => {
   try {
     const decoded = await verifyIdToken(req);
@@ -151,82 +175,188 @@ router.post("/:id/submit", async (req, res) => {
     const db = getDb();
     if (!db) return res.status(503).json({ error: "Database not configured" });
 
-    const { answers, timeSpent, questionTimes, deviceInfo } = req.body || {};
+    const body = req.body || {};
+    const answers = Array.isArray(body.answers) ? body.answers : [];
+    const timeSpent = typeof body.timeSpent === "number" ? body.timeSpent : 0;
+    const questionTimes = Array.isArray(body.questionTimes) ? body.questionTimes : [];
+    const deviceInfo = body.deviceInfo;
 
     // Get lesson data
     const lessonDoc = await db.collection("lessons").doc(req.params.id).get();
     if (!lessonDoc.exists) return res.status(404).json({ error: "Lesson not found" });
 
-    const lessonData = lessonDoc.data();
-    const activities = lessonData.activities || [];
+    const lessonData = lessonDoc.data() || {};
+    const activities = Array.isArray(lessonData.activities) ? lessonData.activities : [];
 
-    // Video-only or no activities: treat as completion with 100%
     if (activities.length === 0) {
       const historyRef = db.collection("users").doc(uid).collection("lessonHistory").doc(req.params.id);
       const passed = true;
       const scoring = { score: 100, passed, timeBonus: 0, breakdown: [], averageScore: 100 };
-      await historyRef.set({
+      const existing = (await historyRef.get()).data() || {};
+      const nowIsoVideo = new Date().toISOString();
+      const videoPayload = {
         ...scoring,
         results: [],
-        timeSpent: timeSpent || 0,
-        completedAt: new Date().toISOString(),
-        attempts: (await historyRef.get()).data()?.attempts + 1 || 1,
+        timeSpent,
+        completedAt: nowIsoVideo,
+        updatedAt: nowIsoVideo,
+        attempts: (existing.attempts || 0) + 1,
         descriptionRead: true,
         videoWatched: true,
-      }, { merge: true });
-      await updateUserProgress(uid, req.params.id, scoring);
-      return res.json({ score: 100, passed: true, ...scoring });
+      };
+      try {
+        await historyRef.set(stripUndefined(videoPayload), { merge: true });
+      } catch (writeErr) {
+        console.error("Lesson submit (video-only) Firestore write error:", writeErr.message, writeErr.code);
+        return res.status(500).json({ error: "Failed to save result", details: String(writeErr.message) });
+      }
+      try {
+        await updateUserProgress(uid, req.params.id, scoring);
+      } catch (_) {}
+      try {
+        const achievementRef = db.collection("users").doc(uid).collection("achievements").doc(req.params.id);
+        await achievementRef.set({
+          type: "lesson_completed",
+          lessonId: req.params.id,
+          score: 100,
+          completedAt: nowIsoVideo,
+          attempts: (existing.attempts || 0) + 1,
+        }, { merge: true });
+      } catch (achErr) {
+        console.warn("Lesson submit (video-only): achievements write failed", achErr.message);
+      }
+      return res.json({ success: true, score: 100, passed: true });
     }
 
-    // Enhanced evaluation – ensure answers array matches activities length (pad with "")
-    const paddedAnswers = Array.from({ length: activities.length }, (_, i) => answers[i] ?? "");
+    // Normalize answers: coerce to string for evaluation (backend checks real answer vs correctAnswer)
+    const paddedAnswers = Array.from({ length: activities.length }, (_, i) => {
+      const a = answers[i];
+      if (a == null) return "";
+      if (typeof a === "string") return a.trim();
+      return String(a);
+    });
     const results = paddedAnswers.map((answer, index) => {
       const activity = activities[index];
-      if (!activity) return { activityId: "unknown", correct: false, score: 0, feedback: "" };
+      if (!activity || typeof activity !== "object") return { activityId: "unknown", correct: false, score: 0, timeSpent: 0, hints: 0, feedback: "" };
 
       const evaluation = evaluateActivityAnswer(answer, activity);
       return {
-        activityId: activity.id,
-        correct: evaluation.correct,
-        score: evaluation.score,
-        timeSpent: questionTimes?.[index] || 0,
-        hints: activity.hints || 0,
-        feedback: evaluation.feedback
+        activityId: activity.id ?? `q${index}`,
+        correct: !!evaluation.correct,
+        score: safeNumber(evaluation.score),
+        timeSpent: safeNumber(questionTimes[index] ?? 0),
+        hints: safeNumber(activity.hints ?? 0),
+        feedback: typeof evaluation.feedback === "string" ? evaluation.feedback : ""
       };
     });
 
     // Calculate comprehensive score
     const scoring = calculateLessonScore(results, lessonData, timeSpent);
     
-    // Save enhanced results
+    // Save enhanced results (strip undefined for Firestore)
     const historyRef = db.collection("users").doc(uid).collection("lessonHistory").doc(req.params.id);
+    const existingHistory = (await historyRef.get()).data() || {};
     
-    const enhancedData = {
-      ...scoring,
-      results,
-      timeSpent,
-      questionTimes,
-      deviceInfo,
-      completedAt: new Date().toISOString(),
-      attempts: (await historyRef.get()).data()?.attempts + 1 || 1,
-      descriptionRead: true,
-      videoWatched: true,
-      learningMetrics: {
+    let learningMetrics;
+    try {
+      learningMetrics = {
         engagementScore: calculateEngagementScore(results, timeSpent),
         masteryLevel: calculateMasteryLevel(results, lessonData),
         improvementAreas: identifyImprovementAreas(results, activities),
         nextRecommendations: generateNextRecommendations(scoring, lessonData)
-      }
+      };
+    } catch (metricsErr) {
+      console.warn("Lesson submit: learningMetrics error", metricsErr.message);
+      learningMetrics = { engagementScore: 0, masteryLevel: "Beginning", improvementAreas: [], nextRecommendations: [] };
+    }
+
+    const nowIso = new Date().toISOString();
+    const payload = {
+      score: safeNumber(scoring.score),
+      passed: !!scoring.passed,
+      timeBonus: safeNumber(scoring.timeBonus),
+      averageScore: safeNumber(scoring.averageScore),
+      breakdown: (scoring.breakdown || []).map(r => ({
+        activityId: String(r?.activityId ?? "unknown"),
+        correct: !!r?.correct,
+        score: safeNumber(r?.score),
+        feedback: String(r?.feedback ?? ""),
+      })),
+      results: results.map(r => ({
+        activityId: String(r.activityId ?? "unknown"),
+        correct: !!r.correct,
+        score: safeNumber(r.score),
+        timeSpent: safeNumber(r.timeSpent),
+        hints: safeNumber(r.hints),
+        feedback: String(r.feedback ?? ""),
+      })),
+      timeSpent: safeNumber(timeSpent),
+      questionTimes: questionTimes.length ? questionTimes.map(safeNumber) : [],
+      ...(typeof deviceInfo === "string" && deviceInfo ? { deviceInfo } : {}),
+      completedAt: nowIso,
+      updatedAt: nowIso,
+      attempts: Math.max(0, (existingHistory.attempts || 0) + 1),
+      descriptionRead: true,
+      videoWatched: true,
+      ...(learningMetrics ? {
+        learningMetrics: {
+          engagementScore: safeNumber(learningMetrics.engagementScore),
+          masteryLevel: String(learningMetrics.masteryLevel ?? "Beginning"),
+          improvementAreas: Array.isArray(learningMetrics.improvementAreas) ? learningMetrics.improvementAreas : [],
+          nextRecommendations: Array.isArray(learningMetrics.nextRecommendations) ? learningMetrics.nextRecommendations : [],
+        },
+      } : {}),
     };
+    let enhancedData;
+    try {
+      enhancedData = stripUndefined(payload);
+    } catch (stripErr) {
+      console.error("Lesson submit stripUndefined error:", stripErr.message);
+      enhancedData = payload;
+    }
 
-    await historyRef.set(enhancedData, { merge: true });
+    try {
+      await historyRef.set(enhancedData, { merge: true });
+    } catch (writeErr) {
+      console.error("Lesson submit Firestore write error:", writeErr.message, writeErr.code);
+      return res.status(500).json({ error: "Failed to save result", details: String(writeErr.message) });
+    }
 
-    // Update user progress
-    await updateUserProgress(uid, req.params.id, scoring);
+    try {
+      await updateUserProgress(uid, req.params.id, scoring);
+    } catch (progressErr) {
+      console.warn("Lesson submit: updateUserProgress failed, retrying once", progressErr.message);
+      try {
+        await updateUserProgress(uid, req.params.id, scoring);
+      } catch (retryErr) {
+        console.error("Lesson submit: updateUserProgress retry failed", retryErr.message);
+      }
+    }
 
-    res.json(enhancedData);
+    if (scoring.passed) {
+      try {
+        const achievementRef = db.collection("users").doc(uid).collection("achievements").doc(req.params.id);
+        await achievementRef.set({
+          type: "lesson_completed",
+          lessonId: req.params.id,
+          score: safeNumber(scoring.score),
+          completedAt: nowIso,
+          attempts: (existingHistory.attempts || 0) + 1,
+        }, { merge: true });
+      } catch (achErr) {
+        console.warn("Lesson submit: achievements write failed", achErr.message);
+      }
+    }
+
+    res.json({
+      success: true,
+      score: scoring.score,
+      passed: scoring.passed,
+    });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error("Lesson submit error:", e.message, e.stack);
+    const msg = e && typeof e.message === "string" ? e.message : "Submission failed";
+    res.status(500).json({ error: msg, details: process.env.NODE_ENV !== "production" ? (e && e.stack) : undefined });
   }
 });
 
@@ -272,14 +402,10 @@ router.get("/:id/next", async (req, res) => {
 
 // Helper functions for enhanced lesson features
 function calculateEstimatedDuration(lesson) {
-  const baseTime = 10; // Base 10 minutes
-  const activityTime = (lesson.activities || []).length * 3; // 3 minutes per activity
-  const difficultyMultiplier = {
-    easy: 0.8,
-    medium: 1.0,
-    hard: 1.3
-  }[lesson.difficulty] || 1.0;
-  
+  const L = lesson && typeof lesson === "object" ? lesson : {};
+  const baseTime = 10;
+  const activityTime = (Array.isArray(L.activities) ? L.activities : []).length * 3;
+  const difficultyMultiplier = { easy: 0.8, medium: 1.0, hard: 1.3 }[L.difficulty] || 1.0;
   return Math.round((baseTime + activityTime) * difficultyMultiplier);
 }
 
@@ -384,12 +510,13 @@ function getAssessmentStrategy(lesson) {
 }
 
 function getPassingScore(difficulty) {
+  if (difficulty == null || difficulty === "") return 70;
   const scores = {
     easy: 70,
     medium: 75,
     hard: 80
   };
-  return scores[difficulty] || 75;
+  return scores[difficulty] || 70;
 }
 
 function evaluateActivityAnswer(answer, activity) {
@@ -413,7 +540,7 @@ function evaluateActivityAnswer(answer, activity) {
       break;
       
     case "audio":
-      correct = answer && answer !== "recorded";
+      correct = !!(answer && String(answer).trim());
       score = correct ? 100 : 50;
       feedback = correct ? "Wabikoze neza ku njyuguti! Umeze ku wihangire!" : "Komeza kurwanira no guhindura ijwi ryawe";
       break;
@@ -442,14 +569,11 @@ function calculateLessonScore(results, lessonData, timeSpent) {
   }
   const totalScore = results.reduce((sum, r) => sum + (r.score || 0), 0);
   const averageScore = Math.round(totalScore / results.length);
-  
-  // Apply time bonus
-  const estimatedTime = calculateEstimatedDuration(lessonData) * 60;
-  const timeBonus = timeSpent < estimatedTime ? 5 : 0;
-  
-  const finalScore = Math.min(100, averageScore + timeBonus);
-  const passed = finalScore >= getPassingScore(lessonData.difficulty);
-  
+  const data = lessonData && typeof lessonData === "object" ? lessonData : {};
+  const estimatedTime = (calculateEstimatedDuration(data) || 10) * 60;
+  const timeBonus = (typeof timeSpent === "number" && timeSpent < estimatedTime) ? 5 : 0;
+  const finalScore = Math.min(100, Math.max(0, averageScore + timeBonus));
+  const passed = finalScore >= getPassingScore(data.difficulty);
   return {
     score: finalScore,
     passed,
@@ -460,27 +584,30 @@ function calculateLessonScore(results, lessonData, timeSpent) {
 }
 
 function calculateEngagementScore(results, timeSpent) {
-  const completionRate = results.filter(r => r.score > 0).length / results.length;
-  const timeEngagement = Math.min(1, timeSpent / 600); // 10 minutes as full engagement
+  if (!results || results.length === 0) return 0;
+  const completionRate = results.filter(r => (r && (r.score || 0) > 0)).length / results.length;
+  const timeEngagement = Math.min(1, (typeof timeSpent === "number" ? timeSpent : 0) / 600);
   return Math.round((completionRate * 0.7 + timeEngagement * 0.3) * 100);
 }
 
 function calculateMasteryLevel(results, lessonData) {
-  const averageScore = results.reduce((sum, r) => sum + (r.score || 0), 0) / results.length;
-  
-  if (averageScore >= 90) return 'Expert';
-  if (averageScore >= 80) return 'Advanced';
-  if (averageScore >= 70) return 'Proficient';
-  if (averageScore >= 60) return 'Developing';
-  return 'Beginning';
+  if (!results || results.length === 0) return "Beginning";
+  const total = results.reduce((sum, r) => sum + (r && r.score ? r.score : 0), 0);
+  const averageScore = total / results.length;
+  if (averageScore >= 90) return "Expert";
+  if (averageScore >= 80) return "Advanced";
+  if (averageScore >= 70) return "Proficient";
+  if (averageScore >= 60) return "Developing";
+  return "Beginning";
 }
 
 function identifyImprovementAreas(results, activities) {
+  if (!Array.isArray(results) || !Array.isArray(activities)) return [];
   return results
-    .filter(r => r.score < 70)
+    .filter(r => r && (r.score || 0) < 70)
     .map(r => {
-      const activity = activities.find(a => a.id === r.activityId);
-      return activity?.category || 'general';
+      const activity = activities.find(a => a && a.id === r.activityId);
+      return (activity && activity.category) || "general";
     })
     .filter((area, index, arr) => arr.indexOf(area) === index);
 }
@@ -513,33 +640,39 @@ function generateNextRecommendations(scoring, lessonData) {
 
 async function updateUserProgress(uid, lessonId, scoring) {
   const db = getDb();
+  if (!db) return;
   const progressRef = db.collection("users").doc(uid).collection("progress").doc("overall");
   const now = new Date().toISOString();
-
-  const currentProgress = (await progressRef.get()).data() || {
-    completedLessons: 0,
-    totalLessons: 0,
-    averageScore: 0,
-    currentStreak: 0
-  };
-
-  const currentStreak = typeof currentProgress.currentStreak === "number" ? currentProgress.currentStreak : 0;
-  const updatedProgress = {
-    completedLessons: scoring.passed ? (currentProgress.completedLessons || 0) + 1 : (currentProgress.completedLessons || 0),
-    totalLessons: (currentProgress.totalLessons || 0) + 1,
-    averageScore: Math.round(
-      ((currentProgress.averageScore || 0) * (currentProgress.totalLessons || 0) + scoring.score) /
-      ((currentProgress.totalLessons || 0) + 1)
-    ),
-    lastCompletedAt: now,
-    lastActivityAt: now,
-    currentStreak: scoring.passed ? currentStreak + 1 : 0
-  };
-
-  await progressRef.set(updatedProgress, { merge: true });
-
-  const profileRef = db.collection("userProfiles").doc(uid);
-  await profileRef.set({ lastActivityAt: now }, { merge: true });
+  try {
+    let totalLessons = 0;
+    try {
+      const lessonsSnap = await db.collection("lessons").orderBy("order").get();
+      totalLessons = lessonsSnap.size;
+    } catch (e) {
+      console.warn("updateUserProgress: lessons count failed", e.message);
+    }
+    const historySnap = await db.collection("users").doc(uid).collection("lessonHistory").get();
+    const lessonHistory = historySnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const completedLessons = lessonHistory.filter(h => h.passed === true).length;
+    const scores = lessonHistory.filter(h => typeof h.score === "number").map(h => h.score);
+    const averageScore = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
+    const currentProgressDoc = await progressRef.get();
+    const currentProgress = currentProgressDoc.data() || {};
+    const currentStreak = typeof currentProgress.currentStreak === "number" ? currentProgress.currentStreak : 0;
+    const updatedProgress = {
+      completedLessons,
+      totalLessons,
+      averageScore,
+      lastCompletedAt: now,
+      lastActivityAt: now,
+      currentStreak: scoring.passed ? currentStreak + 1 : 0,
+    };
+    await progressRef.set(updatedProgress, { merge: true });
+    const profileRef = db.collection("userProfiles").doc(uid);
+    await profileRef.set({ lastActivityAt: now }, { merge: true });
+  } catch (e) {
+    console.error("updateUserProgress error:", e.message);
+  }
 }
 
 function calculateNextLesson(currentLesson, performance, allLessons) {

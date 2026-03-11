@@ -1,9 +1,10 @@
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
+import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "expo-router";
-import { colors, spacing, fontSize, borderRadius } from "@/theme";
+import { colors, spacing, fontSize, borderRadius, cardShadow } from "@/theme";
 import { api, lessonProgressPercent, type LessonProgressItem } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { copy } from "@/lib/copy";
@@ -38,24 +39,39 @@ export default function LessonsScreen() {
   const [loading, setLoading] = useState(true);
   const [progress, setProgress] = useState<any>(null);
 
+  const load = useCallback(async () => {
+    try {
+      const token = user ? await user.getIdToken() : null;
+      const [list, prog] = await Promise.all([
+        api.getLessons(token),
+        api.getProgress(token),
+      ]);
+      setLessons(list as any[]);
+      setProgress(prog);
+    } catch (err) {
+      console.error("Failed to load data:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, [user]);
+
   useEffect(() => {
-    const load = async () => {
-      try {
-        const token = user ? await user.getIdToken() : null;
-        const [list, prog] = await Promise.all([
-          api.getLessons(token),
-          api.getProgress(token),
-        ]);
-        setLessons(list as any[]);
-        setProgress(prog);
-      } catch (err) {
-        console.error("Failed to load data:", err);
-      } finally {
-        setLoading(false);
-      }
-    };
+    if (!user) {
+      setLessons([]);
+      setProgress(null);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
     load();
-  }, [user?.uid]);
+  }, [user?.uid, load]);
+
+  // Refetch when tab gains focus so per-lesson progress (e.g. 100% after submit) stays in sync
+  useFocusEffect(
+    useCallback(() => {
+      if (user) load();
+    }, [user, load])
+  );
 
   // Group lessons by module, sorted by order
   const grouped = lessons
@@ -150,9 +166,11 @@ export default function LessonsScreen() {
                 {/* Lesson Cards */}
                 {modLessons.map((lesson, idx) => {
                   const isCompleted = isLessonCompleted(lesson.id);
-                  const progressPercent = getLessonProgressPercent(lesson.id);
                   const progressItem = getLessonProgress(lesson.id);
-                  const score = progressItem?.passed && typeof progressItem?.score === "number" ? progressItem.score : null;
+                  const rawScore = typeof progressItem?.score === "number" ? progressItem.score : null;
+                  const progressPercent = getLessonProgressPercent(lesson.id);
+                  const displayPercent = rawScore !== null ? rawScore : progressPercent;
+                  const score = rawScore;
                   return (
                     <TouchableOpacity
                       key={lesson.id}
@@ -163,13 +181,10 @@ export default function LessonsScreen() {
                         borderRadius: borderRadius.lg,
                         marginBottom: spacing.sm,
                         overflow: "hidden",
-                        shadowColor: "#000",
-                        shadowOffset: { width: 0, height: 2 },
-                        shadowOpacity: 0.07,
-                        shadowRadius: 8,
+                        ...cardShadow({ color: "#000", offset: { width: 0, height: 2 }, opacity: 0.07, radius: 8 }),
                         elevation: 2,
                         borderLeftWidth: 4,
-                        borderLeftColor: isCompleted ? colors.success : progressPercent >= 50 ? meta.color : colors.border,
+                        borderLeftColor: isCompleted ? colors.success : displayPercent >= 50 ? meta.color : colors.border,
                       }}
                     >
                       <View style={{ padding: spacing.md }}>
@@ -214,7 +229,7 @@ export default function LessonsScreen() {
                               )}
                             </View>
                           </View>
-                          {score !== null && (
+                          {score !== null ? (
                             <View style={{
                               backgroundColor: score >= 80 ? colors.success + "18" : colors.danger + "18",
                               paddingHorizontal: spacing.sm,
@@ -235,12 +250,11 @@ export default function LessonsScreen() {
                                 {score >= 80 ? "Yarangiye" : "Ongera"}
                               </Text>
                             </View>
-                          )}
-                          {score === null && (
+                          ) : (
                             <Ionicons name="chevron-forward" size={20} color={meta.color} />
                           )}
                         </View>
-                        {/* Progress bar – Coursera-style */}
+                        {/* Progress bar – use real score when available so Progress and Lessons match */}
                         <View style={{ marginTop: spacing.sm, marginLeft: 40 + spacing.md }}>
                           <View style={{
                             height: 6,
@@ -249,14 +263,14 @@ export default function LessonsScreen() {
                             overflow: "hidden",
                           }}>
                             <View style={{
-                              width: `${progressPercent}%`,
+                              width: `${Math.min(displayPercent, 100)}%`,
                               height: "100%",
-                              backgroundColor: progressPercent === 100 ? colors.success : meta.color,
+                              backgroundColor: displayPercent === 100 ? colors.success : meta.color,
                               borderRadius: 3,
                             }} />
                           </View>
                           <Text style={{ fontSize: 11, color: colors.mutedForeground, marginTop: 2 }}>
-                            {progressPercent > 0 ? `${progressPercent}%` : "0%"} {progressPercent === 100 ? "· Yarangiye" : progressPercent >= 50 ? "· Videwo" : progressPercent >= 30 ? "· Gusoma" : ""}
+                            {displayPercent > 0 ? `${displayPercent}%` : "0%"} {displayPercent === 100 ? "· Yarangiye" : score !== null ? `· ${copy.progress.ahoUgeze}` : displayPercent >= 50 ? "· Videwo" : displayPercent >= 30 ? "· Gusoma" : ""}
                           </Text>
                         </View>
                       </View>

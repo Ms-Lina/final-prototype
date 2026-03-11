@@ -26,6 +26,15 @@ initFirebase();
 app.use(cors({ origin: true }));
 app.use(express.json());
 
+app.get("/", (req, res) => {
+  res.json({
+    service: "menyai-backend",
+    message: "MenyAI API",
+    health: "/health",
+    docs: "See README for /api/lessons, /api/progress, /api/auth, etc.",
+  });
+});
+
 app.get("/health", (req, res) => {
   const firebaseOk = !!(getDb() && getAuth());
   res.json({
