@@ -1,6 +1,7 @@
 # MenyAI
 
-AI-powered literacy platform (Kinyarwanda). **Mobile app** (React Native/Expo), **backend** (Node.js + Express + Firebase), and **admin panel** (React) for managing lessons, users, and progress.
+AI-powered literacy platform (Kinyarwanda). **Mobile app** (React Native/Expo), **backend** (Node.js + Express + Firebase), and **admin panel** (React) for managing lessons, users, and progress. 
+Related Document is [here](https://github.com/Ms-Lina/final-prototype/blob/main/docs/reference/ADULT%20LITERACY%20ENHANCEMENT%20PLATFORM%20FOR%20RWANDA%20_%20mission%20capstone.pdf)
 
 ---
 
@@ -39,6 +40,10 @@ MenyAI/
 ---
 
 ## Quick start
+
+### GitHub Repository 
+
+git clone https://github.com/Ms-Lina/final-prototype.git
 
 ### Install (from repo root)
 
@@ -90,6 +95,12 @@ pnpm dev
 ```
 
 Opens at **http://localhost:3000**. Login **Admin** / **123** (mock) or your `ADMIN_SECRET`. Backend URL defaults to `http://localhost:4000` in dev.
+
+---
+
+## Video Demo of the App
+
+Click on " View Raw " to download and view the Demo of the app [here](https://github.com/Ms-Lina/final-prototype/blob/main/Untitled%20design%20(4).mp4)
 
 ---
 
