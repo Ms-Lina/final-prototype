@@ -105,6 +105,11 @@ Click on " View Raw " to download and view the Demo of the app [here](https://gi
 
 ---
 
+## Deployed Version of the app 
+
+
+---
+
 ## Firebase setup
 
 ### Console
