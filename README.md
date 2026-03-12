@@ -104,8 +104,9 @@ Just run:
 ```bash
 adb install -r path/to/app-release.apk
 ```
-**Then open the **MenyAI** app on the device/emulator. (No Metro/Expo needed.)
-**
+Then open the **MenyAI** app on the device/emulator. (No Metro/Expo needed.)
+
+
 
 ---
 
