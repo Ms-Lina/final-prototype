@@ -97,6 +97,15 @@ pnpm dev
 
 Opens at **http://localhost:3000**. Login **Admin** / **123** (mock) or your `ADMIN_SECRET`. Backend URL defaults to `http://localhost:4000` in dev.
 
+### Install a prebuilt APK
+
+Just run:
+
+```bash
+adb install -r path/to/app-release.apk
+```
+
+Then open the **MenyAI** app on the device/emulator. (No Metro/Expo needed.)
 ---
 
 ## Video Demo of the App
@@ -106,7 +115,7 @@ Click on " View Raw " to download and view the Demo of the app [here](https://gi
 ---
 
 ## Deployed Version of the app 
-
+The app is deployed [here](https://github.com/Ms-Lina/final-prototype/blob/main/app-release.apk)
 
 ---
 
